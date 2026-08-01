@@ -6,10 +6,12 @@
 
 #define WORLD_SIZE 30
 #define TILE_SIZE 64
+#define SPRITE_SIZE 32
 #define INIT_ARR_SIZE 32
 #define WINDOW_TITLE "Pipes"
 #define WINDOW_WIDTH 1800
 #define WINDOW_HEIGHT 900
+#define TEXTURES_SIZE 4
 
 typedef enum {
     PIPE_TWO,
@@ -56,7 +58,6 @@ typedef struct {
 
 typedef struct {
     Tile tiles[WORLD_SIZE][WORLD_SIZE];
-    ArrData tiles_data;
 
     Pipe *pipes;
     ArrData pipes_data;
@@ -64,6 +65,7 @@ typedef struct {
 
 typedef struct {
     World world;
+    Texture pipe_textures[TEXTURES_SIZE];
     
     int building_rotation;
     PipeType building_type;
@@ -125,15 +127,20 @@ void add_pipe(World *world, Vector2i pos, PipeType type, int rotation) {
 }
 
 Vector2i get_tile_pos(Vector2 pos) {
-    return (Vector2i) { (int) pos.x / TILE_SIZE, (int) pos.y / TILE_SIZE };
+    int pos_x = pos.x / TILE_SIZE;
+    int pos_y = pos.y / TILE_SIZE;
+
+    if (pos_x < 0) pos_x = 0;
+    if (pos_y < 0) pos_y = 0;
+
+    if (pos_x >= WORLD_SIZE) pos_x = WORLD_SIZE - 1;
+    if (pos_y >= WORLD_SIZE) pos_y = WORLD_SIZE - 1;
+
+    return (Vector2i) { pos_x, pos_y };
 }
 
 void cycle_range(int *target, int from, int to) {
-
-    if (*target < from) *target = from;
-    if (*target > to) *target = to;
-
-    *target = (++(*target) + from) % to;
+    *target = from + ((*target - from + 1) % (to - from + 1));
 }
 
 void process_input(State *state, Vector2 mouse_pos) {
@@ -148,29 +155,35 @@ void process_input(State *state, Vector2 mouse_pos) {
         state->render_grid = !state->render_grid;
 
     if (IsKeyPressed(KEY_R))
-        cycle_range(&state->building_rotation, 0, 4);
+        cycle_range(&state->building_rotation, 0, 3);
 
     if (IsKeyPressed(KEY_SPACE))
-        cycle_range((int *) &state->building_type, 0, 4);
+        cycle_range((int *) &state->building_type, 0, 3);
 
     if (IsKeyPressed(KEY_B)) 
         state->building_mode = !state->building_mode;
 }
 
+void cleanup(State *state) {
+    free(state->world.pipes);
+
+    for (size_t i = 0; i < TEXTURES_SIZE; ++i) {
+        UnloadTexture(state->pipe_textures[i]);
+    }
+}
+
 int main() {
 
-    bool no_place_attempts = true;
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE);
 
-    Texture pipe_textures[4];
-    pipe_textures[PIPE_TWO]    = LoadTexture("sprites/pipe_2.png");
-    pipe_textures[PIPE_THREE]  = LoadTexture("sprites/pipe_3.png");
-    pipe_textures[PIPE_FOUR]   = LoadTexture("sprites/pipe_4.png");
-    pipe_textures[PIPE_CORNER] = LoadTexture("sprites/pipe_corner.png");
-
-    Rectangle src = { 0, 0, 32, 32 };
+    Rectangle src = { 0, 0, SPRITE_SIZE, SPRITE_SIZE };
 
     State state;
+    state.pipe_textures[PIPE_TWO]    = LoadTexture("sprites/pipe_2.png");
+    state.pipe_textures[PIPE_THREE]  = LoadTexture("sprites/pipe_3.png");
+    state.pipe_textures[PIPE_FOUR]   = LoadTexture("sprites/pipe_4.png");
+    state.pipe_textures[PIPE_CORNER] = LoadTexture("sprites/pipe_corner.png");
+
     state.no_place_attempts = true;
     state.building_mode = true;
     init_world(&state.world);
@@ -188,14 +201,14 @@ int main() {
             int pos_x = tile_pos.x * TILE_SIZE + TILE_SIZE / 2;
             int pos_y = tile_pos.y * TILE_SIZE + TILE_SIZE / 2;
             Rectangle shadow_pipe_dest = { pos_x, pos_y, TILE_SIZE, TILE_SIZE };
-            DrawTexturePro(pipe_textures[state.building_type], src, shadow_pipe_dest, origin, state.building_rotation * 90, BLUE);
+            DrawTexturePro(state.pipe_textures[state.building_type], src, shadow_pipe_dest, origin, state.building_rotation * 90, BLUE);
         }
 
         for (size_t i = 0; i < state.world.pipes_data.size; ++i) {
             Rectangle pipe_dest = { 0, 0, TILE_SIZE, TILE_SIZE };
             pipe_dest.x = state.world.pipes[i].pos.x * TILE_SIZE + TILE_SIZE / 2; 
             pipe_dest.y = state.world.pipes[i].pos.y * TILE_SIZE + TILE_SIZE / 2; 
-            DrawTexturePro(pipe_textures[state.world.pipes[i].type], src, pipe_dest, origin, state.world.pipes[i].rotation * 90, WHITE);
+            DrawTexturePro(state.pipe_textures[state.world.pipes[i].type], src, pipe_dest, origin, state.world.pipes[i].rotation * 90, WHITE);
         }
 
         if (state.render_grid) {
@@ -215,5 +228,8 @@ Press G to render grid\n";
                                                                                                   
         EndDrawing();
     }
+    
+    cleanup(&state);
+    CloseWindow();
     return 0;
 }
