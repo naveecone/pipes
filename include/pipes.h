@@ -8,8 +8,26 @@
 #define WINDOW_TITLE "Pipes"
 #define WINDOW_WIDTH 1800
 #define WINDOW_HEIGHT 900
+
 #define ENTITIES_TYPE_COUNT 5
-#define TEXTURES_SIZE 5
+#define TEXTURES_SIZE 8
+
+typedef enum {
+    MODE_INFO,
+    MODE_BUILDING,
+    MODE_HATCH_MOUNTING
+} Mode;
+
+typedef enum {
+    TEX_CURSOR,
+    TEX_WOODEN_BOX,
+    TEX_INPUT_HATCH,
+    TEX_OUTPUT_HATCH,
+    TEX_PIPE_TWO,
+    TEX_PIPE_THREE,
+    TEX_PIPE_FOUR,
+    TEX_PIPE_CORNER,
+} TextureType;
 
 typedef enum {
     ENTITY_WOODEN_BOX,
@@ -39,12 +57,20 @@ typedef struct {
 } Vector2i;
 
 typedef struct {
+    Vector2i side;
+    bool input;
+    int rotation;
+} Hatch;
+
+typedef struct {
     EntityType type;
     PipeType ptype;
     Vector2i pos;
 
     Direction dir;
     int rotation;
+
+    Hatch hatch;
 } Entity;
 
 typedef struct {
@@ -67,12 +93,13 @@ typedef struct {
     World world;
     Texture textures[TEXTURES_SIZE];
     
-    int building_rotation;
+    int cursor_rotation;
     EntityType building_type;
 
+    Mode mode;
     bool render_grid;
-    bool building_mode;
     bool no_place_attempts;
+    bool hatch_input;
 } State;
 
 void init_world(World *world);
@@ -81,11 +108,17 @@ void print_direction_bits(Direction dir);
 
 int rotate4(Direction dir, int n);
 
-void add_entity(World *world, Entity e, EntityType type);
+void add_entity(World *world, Entity e);
 
 Vector2i get_tile_pos(Vector2 pos);
 
 void cycle_range(int *target, int from, int to);
+
+int get_rotation_by_side(Vector2i side);
+
+void render_entities(State *state, Rectangle tex_src, Vector2 origin);
+
+void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 mouse_pos);
 
 void process_input(State *state, Vector2 mouse_pos);
 
