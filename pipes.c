@@ -5,6 +5,14 @@
 #include <assert.h>
 #include "pipes.h"
 
+static const Direction directions[] = { DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST };
+static const Vector2i sides[] = { 
+    {  0, -1 },
+    {  1,  0 },
+    {  0,  1 },
+    { -1,  0 }
+};
+
 static const int PIPE_BASE_MASK[4] = {
     [PIPE_TWO] = DIR_WEST | DIR_EAST,
     [PIPE_THREE] = DIR_NORTH | DIR_EAST | DIR_WEST,
@@ -102,7 +110,6 @@ void render_entities(State *state, Rectangle tex_src, Vector2 tex_origin) {
         TextureType tex = entity_texture_map[e.type];
         DrawTexturePro(state->textures[tex], tex_src, entity_dest, tex_origin, state->world.entities[i].rotation * 90, WHITE);
 
-
         if (e.type == ENTITY_WOODEN_BOX) {
 
             if (e.hatch.alive) {
@@ -111,6 +118,10 @@ void render_entities(State *state, Rectangle tex_src, Vector2 tex_origin) {
             }
         }
     }
+}
+
+bool is_pipe(EntityType type) {
+    return type >= ENTITY_PIPE_TWO && type <= ENTITY_PIPE_CORNER;
 }
 
 void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 mouse_pos) {
@@ -131,8 +142,7 @@ void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vecto
                 over_same_type_entity = hover_e.type == type;
             }
 
-            bool is_pipe = type >= ENTITY_PIPE_TWO && type <= ENTITY_PIPE_CORNER;
-            int rotation = is_pipe ? state->cursor_rotation : 0;
+            int rotation = is_pipe(type) ? state->cursor_rotation : 0;
 
             if (!over_same_type_entity) {
                 TextureType tex = entity_texture_map[state->building_type];
@@ -146,23 +156,30 @@ void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vecto
 
 }
 
+void print_entity_info(Entity e) {
+    printf("Position: (%d, %d)\n", e.pos.x, e.pos.y);
+    printf("Entity type: %s\n", entity_to_string_map[e.type]);
+    printf("Direction: ");
+    print_direction_bits(e.dir);
+    printf("Rotation: %d\n", e.rotation);
+    printf("Has hatch: %s\n", e.hatch.alive ? "true" : "false");
+    if (e.hatch.alive) {
+        printf("Input: %s\n", e.hatch.input ? "true" : "false");
+        int r = e.hatch.rotation;
+        printf("Side: (%d, %d)\n", sides[r].x, sides[r].y);
+    }
+    printf("Items contained: %d\n", e.items_contained);
+}
+
 void process_input(State *state, Vector2 mouse_pos) {
     Vector2i tile_pos = get_tile_pos(mouse_pos);
     int cursor_entity_idx = state->world.tiles[tile_pos.x][tile_pos.y].entity_idx;
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (state->mode == MODE_INFO) {
-
             if (cursor_entity_idx != -1) {
                 Entity e = state->world.entities[cursor_entity_idx];
-                printf("Position: (%d, %d)\n", e.pos.x, e.pos.y);
-                printf("Entity type: %s\n", entity_to_string_map[e.type]);
-                printf("Direction: ");
-                print_direction_bits(e.dir);
-                printf("Rotation: %d\n", e.rotation);
-                printf("Has hatch: %s\n", e.hatch.alive ? "true" : "false");
-                if (e.hatch.alive)
-                    printf("Input: %s\n", e.hatch.input ? "true" : "false");
+                print_entity_info(e);
             }
         } else if (state->mode == MODE_BUILDING) {
             Entity e = { 0 };
@@ -172,14 +189,14 @@ void process_input(State *state, Vector2 mouse_pos) {
             e.dir = 0;
             e.rotation = 0;
 
-            bool is_pipe = state->building_type >= ENTITY_PIPE_TWO &&
-                state->building_type <= ENTITY_PIPE_CORNER;
-            if (is_pipe) {
+            if (is_pipe(state->building_type)) {
                 e.rotation = state->cursor_rotation;
                 PipeType ptype = state->building_type - ENTITY_PIPE_TWO;
                 e.dir = rotate4(PIPE_BASE_MASK[ptype], state->cursor_rotation);
                 e.ptype = ptype;
-            } 
+            } else if (state->building_type == ENTITY_WOODEN_BOX) {
+                e.items_contained = 2;
+            }
 
             add_entity(&state->world, e); 
             state->no_place_attempts = false;
@@ -219,7 +236,48 @@ void process_input(State *state, Vector2 mouse_pos) {
             state->hatch_input = !state->hatch_input;
         }
     }
+}
 
+void hatch_transfer_items(State *state) {
+    World *world = &state->world;
+    for (size_t i = 0; i < world->entities_data.size; ++i) {
+        if (world->entities[i].type == ENTITY_WOODEN_BOX) {
+            Entity *box = &world->entities[i];
+            if (box->hatch.alive) {
+                int x = box->pos.x + sides[box->hatch.rotation].x;
+                int y = box->pos.y + sides[box->hatch.rotation].y;
+
+                if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+
+                int idx = world->tiles[x][y].entity_idx;
+                if (idx != -1) {
+                    Entity *e = &world->entities[idx];
+                    if (is_pipe(e->type)) {
+                        Direction dir = directions[box->hatch.rotation];
+                        Direction pipe_dir = rotate4(e->dir, 2);
+                        if (!(pipe_dir & dir)) 
+                            continue;
+                    }
+                    if (box->hatch.input && e->items_contained > 0) {
+                        box->items_buffered += 1;
+                        e->items_buffered -= 1;
+                    }
+                    if (!box->hatch.input && box->items_contained > 0) {
+                        box->items_buffered -= 1;
+                        e->items_buffered += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    for (size_t i = 0; i < world->entities_data.size; ++i) {
+        if (world->entities[i].items_buffered != 0) {
+            Entity *e = &world->entities[i];
+            e->items_contained += e->items_buffered;
+            e->items_buffered = 0;
+        }
+    }
 }
 
 void cleanup(State *state) {
@@ -255,13 +313,17 @@ int main() {
     Rectangle src = { 0, 0, SPRITE_SIZE, SPRITE_SIZE };
     Vector2 origin = { TILE_SIZE / 2, TILE_SIZE / 2 };
 
-    state.building_type = ENTITY_WOODEN_BOX;
-    state.cursor_rotation = 0;
-    state.render_grid = false;
+    state.last_updated = 0.f;
+    state.item_transfer_freq = 1.f;
 
     while (!WindowShouldClose()) {  
         Vector2 mouse_pos = GetMousePosition();
         process_input(&state, mouse_pos);
+        float time = GetTime();
+        while (time >= state.last_updated + state.item_transfer_freq) {
+            hatch_transfer_items(&state);
+            state.last_updated = time;
+        }
 
         BeginDrawing();
         ClearBackground(BLACK);

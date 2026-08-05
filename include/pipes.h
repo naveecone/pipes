@@ -71,10 +71,12 @@ typedef struct {
     int rotation;
 
     Hatch hatch;
+    int items_contained;
+    int items_buffered;
 } Entity;
 
 typedef struct {
-    ssize_t entity_idx;
+    int entity_idx;
 } Tile;
 
 typedef struct {
@@ -100,6 +102,9 @@ typedef struct {
     bool render_grid;
     bool no_place_attempts;
     bool hatch_input;
+
+    float item_transfer_freq;
+    float last_updated;
 } State;
 
 void init_world(World *world);
@@ -120,7 +125,13 @@ void render_entities(State *state, Rectangle tex_src, Vector2 origin);
 
 void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 mouse_pos);
 
+void print_entity_info(Entity e);
+
+bool is_pipe(EntityType type);
+
 void process_input(State *state, Vector2 mouse_pos);
+
+void hatch_transfer_items(State *state);
 
 void cleanup(State *state);
 
