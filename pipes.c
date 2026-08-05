@@ -98,16 +98,16 @@ void render_entities(State *state, Rectangle tex_src, Vector2 tex_origin) {
         entity_dest.x = state->world.entities[i].pos.x * TILE_SIZE + TILE_SIZE / 2; 
         entity_dest.y = state->world.entities[i].pos.y * TILE_SIZE + TILE_SIZE / 2; 
 
-        TextureType tex = entity_texture_map[state->world.entities[i].type];
+        Entity e = state->world.entities[i];
+        TextureType tex = entity_texture_map[e.type];
         DrawTexturePro(state->textures[tex], tex_src, entity_dest, tex_origin, state->world.entities[i].rotation * 90, WHITE);
 
 
-        Entity e = state->world.entities[i];
         if (e.type == ENTITY_WOODEN_BOX) {
 
-            if (e.hatch.side.x != 0 || e.hatch.side.y != 0) {
+            if (e.hatch.alive) {
                 TextureType t = e.hatch.input ? TEX_INPUT_HATCH : TEX_OUTPUT_HATCH;
-                DrawTexturePro(state->textures[t], tex_src, entity_dest, tex_origin, e.hatch.rotation * 90, BLUE);
+                DrawTexturePro(state->textures[t], tex_src, entity_dest, tex_origin, e.hatch.rotation * 90, WHITE);
             }
         }
     }
@@ -120,7 +120,6 @@ void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vecto
         int pos_y = tile_pos.y * TILE_SIZE + TILE_SIZE / 2;
 
         Rectangle placement_dest = { pos_x, pos_y, TILE_SIZE, TILE_SIZE };
-
 
         if (state->mode == MODE_BUILDING) {
            
@@ -149,18 +148,21 @@ void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vecto
 
 void process_input(State *state, Vector2 mouse_pos) {
     Vector2i tile_pos = get_tile_pos(mouse_pos);
+    int cursor_entity_idx = state->world.tiles[tile_pos.x][tile_pos.y].entity_idx;
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         if (state->mode == MODE_INFO) {
-            int idx = state->world.tiles[tile_pos.x][tile_pos.y].entity_idx;
 
-            if (idx != -1) {
-                Entity e = state->world.entities[idx];
+            if (cursor_entity_idx != -1) {
+                Entity e = state->world.entities[cursor_entity_idx];
                 printf("Position: (%d, %d)\n", e.pos.x, e.pos.y);
                 printf("Entity type: %s\n", entity_to_string_map[e.type]);
                 printf("Direction: ");
                 print_direction_bits(e.dir);
                 printf("Rotation: %d\n", e.rotation);
+                printf("Has hatch: %s\n", e.hatch.alive ? "true" : "false");
+                if (e.hatch.alive)
+                    printf("Input: %s\n", e.hatch.input ? "true" : "false");
             }
         } else if (state->mode == MODE_BUILDING) {
             Entity e = { 0 };
@@ -182,15 +184,30 @@ void process_input(State *state, Vector2 mouse_pos) {
             add_entity(&state->world, e); 
             state->no_place_attempts = false;
         } else if (state->mode == MODE_HATCH_MOUNTING) {
-            // TODO
+            if (cursor_entity_idx != -1) {
+                Entity *cursor_e = &state->world.entities[cursor_entity_idx];
+
+                if (cursor_e->type == ENTITY_WOODEN_BOX) {
+                    cursor_e->hatch.alive = true;
+                    cursor_e->hatch.input = state->hatch_input;
+                    cursor_e->hatch.rotation = state->cursor_rotation;
+                }
+            }
         }
     }
 
     if (IsKeyPressed(KEY_G))
         state->render_grid = !state->render_grid;
 
-    if (IsKeyPressed(KEY_H))
+    if (IsKeyPressed(KEY_H)) {
         state->mode = MODE_HATCH_MOUNTING;
+        state->cursor_rotation = 0;
+    }
+
+    if (IsKeyPressed(KEY_B)) {
+        state->mode = state->mode == MODE_BUILDING ? MODE_INFO : MODE_BUILDING;
+        state->cursor_rotation = 0;
+    }
 
     if (IsKeyPressed(KEY_R))
         cycle_range(&state->cursor_rotation, 0, 4);
@@ -203,8 +220,6 @@ void process_input(State *state, Vector2 mouse_pos) {
         }
     }
 
-    if (IsKeyPressed(KEY_B))
-        state->mode = state->mode == MODE_BUILDING ? MODE_INFO : MODE_BUILDING;
 }
 
 void cleanup(State *state) {

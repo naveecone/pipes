@@ -57,7 +57,7 @@ typedef struct {
 } Vector2i;
 
 typedef struct {
-    Vector2i side;
+    bool alive;
     bool input;
     int rotation;
 } Hatch;
