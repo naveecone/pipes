@@ -5,12 +5,11 @@
 #include <assert.h>
 #include "pipes.h"
 
-static const Direction directions[] = { DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST };
-static const Vector2i sides[] = { 
-    {  0, -1 },
-    {  1,  0 },
-    {  0,  1 },
-    { -1,  0 }
+static const Side SIDES[4] = {
+    { DIR_NORTH, {  0, -1 } },
+    { DIR_EAST,  {  1,  0 } },
+    { DIR_SOUTH, {  0,  1 } },
+    { DIR_WEST,  { -1,  0 } }
 };
 
 static const int PIPE_BASE_MASK[4] = {
@@ -99,6 +98,21 @@ void cycle_range(int *target, int from, int to) {
     *target = from + ((*target - from + 1) % (to - from));
 }
 
+void render_cursor(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 pos) {
+    Vector2i tile_pos = get_tile_pos(pos);
+    Rectangle dest = { tile_pos.x, tile_pos.y, TILE_SIZE, TILE_SIZE };
+    TextureType t = state->mode == MODE_INFO ? TEX_CURSOR_INFO : TEX_CURSOR_BUILD;
+    dest.x = tile_pos.x * TILE_SIZE;
+    dest.y = tile_pos.y * TILE_SIZE;
+
+    if (state->mode == MODE_INFO) 
+        DrawTexturePro(state->textures[TEX_TILE_CURSOR], tex_src, dest, (Vector2) { 0, 0 }, 0, WHITE);
+    
+    dest.x = pos.x;
+    dest.y = pos.y;
+    DrawTexturePro(state->textures[t], tex_src, dest, tex_origin, 0, WHITE);
+}
+
 void render_entities(State *state, Rectangle tex_src, Vector2 tex_origin) {
 
     for (size_t i = 0; i < state->world.entities_data.size; ++i) {
@@ -116,12 +130,12 @@ void render_entities(State *state, Rectangle tex_src, Vector2 tex_origin) {
                 TextureType t = e.hatch.input ? TEX_INPUT_HATCH : TEX_OUTPUT_HATCH;
                 DrawTexturePro(state->textures[t], tex_src, entity_dest, tex_origin, e.hatch.rotation * 90, WHITE);
             }
+        } else if (is_pipe(e.type)) {
+            char buffer[8];
+            snprintf(buffer, 8, "%d", e.items_contained);
+            DrawText(buffer, entity_dest.x + 22, entity_dest.y - 28, 20, WHITE);
         }
     }
-}
-
-bool is_pipe(EntityType type) {
-    return type >= ENTITY_PIPE_TWO && type <= ENTITY_PIPE_CORNER;
 }
 
 void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 mouse_pos) {
@@ -153,10 +167,21 @@ void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vecto
             TextureType t = state->hatch_input ? TEX_INPUT_HATCH : TEX_OUTPUT_HATCH;
             DrawTexturePro(state->textures[t], tex_src, placement_dest, tex_origin, state->cursor_rotation * 90, BLUE);
         }
-
 }
 
-void print_entity_info(Entity e) {
+bool is_pipe(EntityType type) {
+    return type >= ENTITY_PIPE_TWO && type <= ENTITY_PIPE_CORNER;
+}
+
+bool outside_world(int x, int y) {
+    return (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE);
+}
+
+void handle_info_click(State *state, int entity_idx) {
+    if (entity_idx == -1) return;
+
+    Entity e = state->world.entities[entity_idx];
+
     printf("Position: (%d, %d)\n", e.pos.x, e.pos.y);
     printf("Entity type: %s\n", entity_to_string_map[e.type]);
     printf("Direction: ");
@@ -166,52 +191,64 @@ void print_entity_info(Entity e) {
     if (e.hatch.alive) {
         printf("Input: %s\n", e.hatch.input ? "true" : "false");
         int r = e.hatch.rotation;
-        printf("Side: (%d, %d)\n", sides[r].x, sides[r].y);
+        printf("Side: (%d, %d)\n", SIDES[r].offset.x, SIDES[r].offset.y);
     }
+    printf("Last input dir: ");
+    print_direction_bits(e.last_input_dir);
     printf("Items contained: %d\n", e.items_contained);
+
 }
+
+void handle_building_click(State *state, Vector2i tile_pos) {
+    Entity e = { 0 };
+
+    e.pos = tile_pos;
+    e.type = state->building_type;
+    e.dir = 0;
+    e.rotation = 0;
+    e.next_side = 0;
+    e.last_input_dir = 0;
+
+    if (is_pipe(state->building_type)) {
+        e.rotation = state->cursor_rotation;
+        PipeType ptype = state->building_type - ENTITY_PIPE_TWO;
+        e.dir = rotate4(PIPE_BASE_MASK[ptype], state->cursor_rotation);
+        e.ptype = ptype;
+    } else if (state->building_type == ENTITY_WOODEN_BOX) {
+        e.items_contained = 3;
+    }
+
+    add_entity(&state->world, e); 
+    state->no_place_attempts = false;
+}
+
+void handle_hatch_click(State *state, int entity_idx) {
+    if (entity_idx != -1) {
+        Entity *cursor_e = &state->world.entities[entity_idx];
+
+        if (cursor_e->type == ENTITY_WOODEN_BOX) {
+            cursor_e->hatch.alive = true;
+            cursor_e->hatch.input = state->hatch_input;
+            cursor_e->hatch.rotation = state->cursor_rotation;
+        }
+    }
+}
+
 
 void process_input(State *state, Vector2 mouse_pos) {
     Vector2i tile_pos = get_tile_pos(mouse_pos);
     int cursor_entity_idx = state->world.tiles[tile_pos.x][tile_pos.y].entity_idx;
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        if (state->mode == MODE_INFO) {
-            if (cursor_entity_idx != -1) {
-                Entity e = state->world.entities[cursor_entity_idx];
-                print_entity_info(e);
-            }
-        } else if (state->mode == MODE_BUILDING) {
-            Entity e = { 0 };
-
-            e.pos = tile_pos;
-            e.type = state->building_type;
-            e.dir = 0;
-            e.rotation = 0;
-
-            if (is_pipe(state->building_type)) {
-                e.rotation = state->cursor_rotation;
-                PipeType ptype = state->building_type - ENTITY_PIPE_TWO;
-                e.dir = rotate4(PIPE_BASE_MASK[ptype], state->cursor_rotation);
-                e.ptype = ptype;
-            } else if (state->building_type == ENTITY_WOODEN_BOX) {
-                e.items_contained = 2;
-            }
-
-            add_entity(&state->world, e); 
-            state->no_place_attempts = false;
-        } else if (state->mode == MODE_HATCH_MOUNTING) {
-            if (cursor_entity_idx != -1) {
-                Entity *cursor_e = &state->world.entities[cursor_entity_idx];
-
-                if (cursor_e->type == ENTITY_WOODEN_BOX) {
-                    cursor_e->hatch.alive = true;
-                    cursor_e->hatch.input = state->hatch_input;
-                    cursor_e->hatch.rotation = state->cursor_rotation;
-                }
-            }
+        switch(state->mode) {
+            case MODE_INFO:           handle_info_click(state, cursor_entity_idx); break;
+            case MODE_BUILDING:       handle_building_click(state, tile_pos); break;
+            case MODE_HATCH_MOUNTING: handle_hatch_click(state, cursor_entity_idx); break;
         }
     }
+
+    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+        state->mode = MODE_INFO;
 
     if (IsKeyPressed(KEY_G))
         state->render_grid = !state->render_grid;
@@ -222,7 +259,7 @@ void process_input(State *state, Vector2 mouse_pos) {
     }
 
     if (IsKeyPressed(KEY_B)) {
-        state->mode = state->mode == MODE_BUILDING ? MODE_INFO : MODE_BUILDING;
+        state->mode = MODE_BUILDING;
         state->cursor_rotation = 0;
     }
 
@@ -238,46 +275,108 @@ void process_input(State *state, Vector2 mouse_pos) {
     }
 }
 
-void hatch_transfer_items(State *state) {
-    World *world = &state->world;
+void update_boxes(World *world) {
     for (size_t i = 0; i < world->entities_data.size; ++i) {
-        if (world->entities[i].type == ENTITY_WOODEN_BOX) {
-            Entity *box = &world->entities[i];
-            if (box->hatch.alive) {
-                int x = box->pos.x + sides[box->hatch.rotation].x;
-                int y = box->pos.y + sides[box->hatch.rotation].y;
+        Entity *e = &world->entities[i];
+        if (e->type != ENTITY_WOODEN_BOX) continue;
 
-                if (x < 0 || x >= WORLD_SIZE || y < 0 || y >= WORLD_SIZE) continue;
+        Entity *box = &world->entities[i];
 
-                int idx = world->tiles[x][y].entity_idx;
-                if (idx != -1) {
-                    Entity *e = &world->entities[idx];
-                    if (is_pipe(e->type)) {
-                        Direction dir = directions[box->hatch.rotation];
-                        Direction pipe_dir = rotate4(e->dir, 2);
-                        if (!(pipe_dir & dir)) 
-                            continue;
-                    }
-                    if (box->hatch.input && e->items_contained > 0) {
-                        box->items_buffered += 1;
-                        e->items_buffered -= 1;
-                    }
-                    if (!box->hatch.input && box->items_contained > 0) {
-                        box->items_buffered -= 1;
-                        e->items_buffered += 1;
-                    }
-                }
+        if (!box->hatch.alive) continue;
+
+        int tx = box->pos.x + SIDES[box->hatch.rotation].offset.x;
+        int ty = box->pos.y + SIDES[box->hatch.rotation].offset.y;
+
+        if (outside_world(tx, ty)) continue;
+
+        int idx = world->tiles[tx][ty].entity_idx;
+        if (idx == -1) continue;
+
+        Entity *neighbor = &world->entities[idx];
+        bool can_transfer = true;
+        if (is_pipe(neighbor->type)) {
+            Direction dir = SIDES[box->hatch.rotation].dir;
+            Direction pipe_dir = rotate4(neighbor->dir, 2);
+            if (!(pipe_dir & dir)) can_transfer = false;
+        }
+        if (can_transfer) {
+            bool input  = box->hatch.input;
+            bool output = !box->hatch.input;
+
+            bool neighbor_enough = neighbor->items_contained 
+                - neighbor->items_received_this_it > 0; 
+
+            bool box_enough = box->items_contained - box->items_received_this_it > 0;
+            if (input && neighbor_enough) {
+                box->items_contained += 1;
+                box->items_received_this_it += 1;
+                neighbor->items_contained -= 1;
+            }
+            if (output && box_enough) {
+                box->items_contained -= 1;
+                neighbor->items_contained += 1;
+                neighbor->items_received_this_it += 1;
             }
         }
     }
+}
+
+void update_pipes(World *world) {
 
     for (size_t i = 0; i < world->entities_data.size; ++i) {
-        if (world->entities[i].items_buffered != 0) {
-            Entity *e = &world->entities[i];
-            e->items_contained += e->items_buffered;
-            e->items_buffered = 0;
+        Entity *e = &world->entities[i];
+
+        if (!is_pipe(e->type)) continue;
+        int x = 0;
+        int y = 0;
+        int idx = -1;
+
+        // Check 4 adjacent sides until a good one is found and rotate 
+        // output every tick (round-robin pattern)
+        for (int j = 0; j < 4; ++j) {
+            cycle_range(&e->next_side, 0, 4);
+            Direction side = SIDES[e->next_side].dir;
+
+            if (side & e->last_input_dir) continue;
+
+            x = e->pos.x + SIDES[e->next_side].offset.x;
+            y = e->pos.y + SIDES[e->next_side].offset.y;
+
+            if (outside_world(x, y) || !(e->dir & side)) continue;
+
+            idx = world->tiles[x][y].entity_idx;
+            if (idx == -1) continue;
+            Entity *neighbor = &world->entities[idx]; 
+            if (!is_pipe(neighbor->type)) continue;
+            Direction match = rotate4(neighbor->dir, 2);
+
+            bool enough = e->items_contained 
+                - e->items_received_this_it > 0;
+            if ((match & side) && enough) {
+                e->items_contained -= 1;
+                neighbor->items_contained += 1;
+                neighbor->items_received_this_it += 1;
+                neighbor->last_input_dir = rotate4(side, 2);
+                break;
+            }
         }
     }
+    for (size_t i = 0; i < world->entities_data.size; ++i) {
+        Entity *e = &world->entities[i];
+        e->items_received_this_it = 0;
+    }
+}
+void load_textures(State *state) {
+    state->textures[TEX_WOODEN_BOX]   = LoadTexture("sprites/wooden_box.png");
+    state->textures[TEX_INPUT_HATCH]  = LoadTexture("sprites/input_hatch.png");
+    state->textures[TEX_OUTPUT_HATCH] = LoadTexture("sprites/output_hatch.png");
+    state->textures[TEX_PIPE_TWO]     = LoadTexture("sprites/pipe_2.png");
+    state->textures[TEX_PIPE_THREE]   = LoadTexture("sprites/pipe_3.png");
+    state->textures[TEX_PIPE_FOUR]    = LoadTexture("sprites/pipe_4.png");
+    state->textures[TEX_PIPE_CORNER]  = LoadTexture("sprites/pipe_corner.png");
+    state->textures[TEX_CURSOR_BUILD] = LoadTexture("sprites/cursor_build.png");
+    state->textures[TEX_CURSOR_INFO]  = LoadTexture("sprites/cursor_info.png");
+    state->textures[TEX_TILE_CURSOR]  = LoadTexture("sprites/cursor.png");
 }
 
 void cleanup(State *state) {
@@ -292,14 +391,7 @@ int main() {
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE);
 
     State state;
-    state.textures[TEX_WOODEN_BOX]     = LoadTexture("sprites/wooden_box.png");
-    state.textures[TEX_INPUT_HATCH]    = LoadTexture("sprites/input_hatch.png");
-    state.textures[TEX_OUTPUT_HATCH]   = LoadTexture("sprites/output_hatch.png");
-    state.textures[TEX_PIPE_TWO]       = LoadTexture("sprites/pipe_2.png");
-    state.textures[TEX_PIPE_THREE]     = LoadTexture("sprites/pipe_3.png");
-    state.textures[TEX_PIPE_FOUR]      = LoadTexture("sprites/pipe_4.png");
-    state.textures[TEX_PIPE_CORNER]    = LoadTexture("sprites/pipe_corner.png");
-    state.textures[TEX_CURSOR]         = LoadTexture("sprites/cursor.png");
+    load_textures(&state);
 
     state.no_place_attempts = true;
     state.mode = MODE_INFO;
@@ -314,16 +406,19 @@ int main() {
     Vector2 origin = { TILE_SIZE / 2, TILE_SIZE / 2 };
 
     state.last_updated = 0.f;
-    state.item_transfer_freq = 1.f;
+    state.item_transfer_freq = 0.5f;
 
-    while (!WindowShouldClose()) {  
+    while (!WindowShouldClose()) {
         Vector2 mouse_pos = GetMousePosition();
         process_input(&state, mouse_pos);
         float time = GetTime();
-        while (time >= state.last_updated + state.item_transfer_freq) {
-            hatch_transfer_items(&state);
+        if (time >= state.last_updated + state.item_transfer_freq) {
+            update_boxes(&state.world);
+            update_pipes(&state.world);
+            
             state.last_updated = time;
         }
+
 
         BeginDrawing();
         ClearBackground(BLACK);
@@ -336,6 +431,8 @@ int main() {
                 for (int y = 0; y < WORLD_SIZE; ++y)
                     DrawRectangleLines(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE, GRAY);
         }
+        
+        render_cursor(&state, src, origin, mouse_pos);
 
         if (state.no_place_attempts) {
             const char *string = \
@@ -348,8 +445,6 @@ Press G to render grid\n";
         }
 
                                                                                 
-        Rectangle dest = { mouse_pos.x, mouse_pos.y, TILE_SIZE, TILE_SIZE };
-        DrawTexturePro(state.textures[TEX_CURSOR], src, dest, origin, 0, WHITE);
         EndDrawing();
     }
     

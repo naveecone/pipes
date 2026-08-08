@@ -10,7 +10,7 @@
 #define WINDOW_HEIGHT 900
 
 #define ENTITIES_TYPE_COUNT 5
-#define TEXTURES_SIZE 8
+#define TEXTURES_SIZE 10
 
 typedef enum {
     MODE_INFO,
@@ -18,11 +18,23 @@ typedef enum {
     MODE_HATCH_MOUNTING
 } Mode;
 
+typedef struct {
+    int x;
+    int y;
+} Vector2i;
+
 typedef enum {
-    TEX_CURSOR,
-    TEX_WOODEN_BOX,
+    // Cursors
+    TEX_CURSOR_BUILD,
+    TEX_CURSOR_INFO,
+    TEX_TILE_CURSOR,
+
+    // Hatches
     TEX_INPUT_HATCH,
     TEX_OUTPUT_HATCH,
+
+    // Entities
+    TEX_WOODEN_BOX,
     TEX_PIPE_TWO,
     TEX_PIPE_THREE,
     TEX_PIPE_FOUR,
@@ -52,9 +64,9 @@ typedef enum {
 } Direction;
 
 typedef struct {
-    int x;
-    int y;
-} Vector2i;
+    Direction dir;
+    Vector2i offset;
+} Side; 
 
 typedef struct {
     bool alive;
@@ -68,11 +80,17 @@ typedef struct {
     Vector2i pos;
 
     Direction dir;
+    Direction last_input_dir;
     int rotation;
+    int next_side;
+
+    bool has_prev_input;
+    Vector2 prev_input;
 
     Hatch hatch;
     int items_contained;
-    int items_buffered;
+    // To prevent one item from being transferred multiple times in one tick
+    int items_received_this_it;
 } Entity;
 
 typedef struct {
@@ -119,19 +137,31 @@ Vector2i get_tile_pos(Vector2 pos);
 
 void cycle_range(int *target, int from, int to);
 
-int get_rotation_by_side(Vector2i side);
+void print_entity_info(Entity e);
+
+void render_cursor(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 pos);
 
 void render_entities(State *state, Rectangle tex_src, Vector2 origin);
 
 void render_placement(State *state, Rectangle tex_src, Vector2 tex_origin, Vector2 mouse_pos);
 
-void print_entity_info(Entity e);
-
 bool is_pipe(EntityType type);
+
+bool outside_world(int x, int y);
+
+void handle_info_click(State *state, int entity_idx);
+
+void handle_building_click(State *state, Vector2i tile_pos);
+
+void handle_hatch_click(State *state, int entity_idx);
 
 void process_input(State *state, Vector2 mouse_pos);
 
-void hatch_transfer_items(State *state);
+void update_boxes(World *world);
+
+void update_pipes(World *world);
+
+void load_textures(State *state);
 
 void cleanup(State *state);
 
